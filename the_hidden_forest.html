@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>The Hidden Forest — Pink Ghost</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#194d29;color:#fff5df;font-family:system-ui,-apple-system,sans-serif;display:flex;justify-content:center;padding:12px}
+.game{width:min(100%,460px);background:#286b35;border-radius:18px;padding:12px;box-shadow:0 8px 24px #102e1b80}
+.top{display:flex;justify-content:space-between;align-items:center;gap:6px;font-weight:800;font-size:14px;margin:0 2px 10px}
+canvas{display:block;width:100%;height:auto;border:3px solid #fff5df;border-radius:16px;touch-action:none;background:#286a32}
+@keyframes pink-flash{0%,100%{filter:none}20%,60%{filter:brightness(1.35) saturate(1.8) sepia(.2) hue-rotate(285deg)}40%,80%{filter:brightness(1.8) saturate(2.5) sepia(.15) hue-rotate(285deg)}}
+canvas.caught-flash{animation:pink-flash .65s ease-in-out 2}
+.message{text-align:center;font-weight:750;min-height:42px;padding:10px 2px}
+.controls{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.pad{display:grid;grid-template-columns:repeat(3,48px);grid-template-rows:repeat(2,44px);gap:4px}
+button{border:0;border-radius:12px;min-height:43px;padding:10px 12px;font-size:17px;font-weight:800;touch-action:none;cursor:pointer}
+.pad button{background:#174b29;color:#fff;border:1px solid #75a77b;padding:4px}
+.action{display:flex;flex-direction:column;gap:7px}
+.action button{background:#fff2d7;color:#244c31;font-size:14px}
+.thumb-area{display:flex;justify-content:center;margin:12px 0 2px;touch-action:none;user-select:none}
+.thumb-stick{width:138px;height:138px;border-radius:50%;border:3px solid #9dc6a0;background:radial-gradient(circle at 35% 28%,#3e8550,#174b29 75%);position:relative;touch-action:none;box-shadow:inset 0 3px 12px #0b2b18aa}
+.thumb-knob{position:absolute;width:58px;height:58px;border-radius:50%;left:37px;top:37px;background:linear-gradient(145deg,#ffe9c0,#e4bb7b);border:3px solid #fff4db;box-shadow:0 3px 8px #092a16aa;pointer-events:none}
+.thumb-label{text-align:center;font-size:12px;color:#f6f0df;margin-top:4px}
+.help{font-size:12px;line-height:1.5;margin-top:10px;color:#f6f0df}
+</style>
+</head>
+<body>
+<main class="game">
+ <div class="top"><span>🌲 THE HIDDEN FOREST</span><span>LEVEL <span id="level">1</span>/5 · 🪨 <span id="score">0</span>/1</span><span>⏱ <span id="time">0</span>s</span></div>
+ <canvas id="screen" width="360" height="540" aria-label="A forest game. Guide the girl to the glowing rock while avoiding the pink ghost."></canvas>
+ <div class="message" id="message">Press Start Game, then find the real escape rock! 👻</div>
+ <div class="controls">
+  <div class="pad">
+   <span></span><button data-dir="up" aria-label="Move up">▲</button><span></span>
+   <button data-dir="left" aria-label="Move left">◀</button><button data-dir="down" aria-label="Move down">▼</button><button data-dir="right" aria-label="Move right">▶</button>
+  </div>
+  <div class="action"><button id="start">▶ Start Game</button><button id="restart">↻ Restart</button></div>
+ </div>
+ <div class="thumb-area" aria-label="Thumb movement control">
+  <div>
+   <div id="thumbStick" class="thumb-stick" role="application" aria-label="Drag the thumb control to move">
+    <div id="thumbKnob" class="thumb-knob"></div>
+   </div>
+   <div class="thumb-label">Move with your thumb</div>
+  </div>
+ </div>
+ <div class="help">📱 Complete 5 levels! Each level adds 2 fake rocks and makes the ghost 3% faster. Drag the thumb control to move.</div>
+</main>
+<script>
+(() => {
+const canvas=document.getElementById('screen'),ctx=canvas.getContext('2d');
+const W=360,H=540;
+const trees=[[55,95],[250,105],[305,205],[175,250],[255,325],[92,365],[195,420],[85,475],[300,460],[55,255],[155,155]];
+const rock={x:315,y:45};
+let decoyRocks=[],level=1;
+let player,ghost,held={},playing=false,ended=false,won=false,elapsed=0,last=0,raf=0;
+const $=id=>document.getElementById(id);
+function randomRockSpot(existing){
+ let x=rock.x,y=rock.y,tries=0;
+ do{
+  x=28+Math.random()*(W-56);
+  y=28+Math.random()*(H-56);
+  tries++;
+ }while(tries<300&&(Math.hypot(x-38,y-490)<110||
+   Math.hypot(x-310,y-420)<75||
+   trees.some(t=>Math.hypot(x-t[0],y-t[1])<43)||
+   existing.some(r=>Math.hypot(x-r.x,y-r.y)<48)));
+ return {x,y};
+}
+function moveRock(){
+ const spots=[];
+ const main=randomRockSpot(spots);rock.x=main.x;rock.y=main.y;spots.push({x:rock.x,y:rock.y});
+ decoyRocks=[];
+ // Two more decoy rocks are added at every new level.
+ for(let i=0;i<level+4;i++){
+  const spot=randomRockSpot(spots);
+  decoyRocks.push(spot);spots.push(spot);
+ }
+}
+function reset(startNow=false,resetLevel=true){
+ if(resetLevel)level=1;
+ player={x:38,y:490};ghost={x:310,y:420};moveRock();held={};playing=startNow;ended=false;won=false;elapsed=0;last=0;
+ $('level').textContent=level;$('score').textContent='0';$('time').textContent='0';
+ $('start').textContent=playing?'Ⅱ Pause':'▶ Start Game';
+ $('message').textContent=playing?'Find the real escape rock! 🪨':'Press Start Game, then find the real escape rock! 👻';
+ draw();
+ if(playing&&!raf)raf=requestAnimationFrame(loop);
+}
+function circle(x,y,r,color){ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();}
+function drawTree(x,y){
+ ctx.fillStyle='#44321e';ctx.fillRect(x-4,y+7,8,18);
+ circle(x,y,22,'#249747');circle(x-10,y-5,15,'#2da64d');circle(x+10,y-5,15,'#2da64d');
+}
+function drawGirl(x,y){
+ ctx.fillStyle='#bd8968';ctx.fillRect(x-7,y+9,5,12);ctx.fillRect(x+3,y+9,5,12);
+ ctx.fillStyle='#71869a';ctx.fillRect(x-12,y-8,24,20);ctx.fillRect(x-15,y-6,5,14);ctx.fillRect(x+10,y-6,5,14);
+ circle(x,y-17,10,'#f2c6a5');ctx.fillStyle='#483126';ctx.beginPath();ctx.arc(x,y-20,10,Math.PI,Math.PI*2);ctx.fill();ctx.fillRect(x-10,y-21,3,7);ctx.fillRect(x+6,y-22,4,7);
+}
+function drawGhost(x,y){
+ ctx.save();ctx.shadowColor='#ff55d7';ctx.shadowBlur=16;ctx.fillStyle='#ff80df';
+ ctx.beginPath();ctx.moveTo(x-14,y+14);ctx.lineTo(x-14,y-3);ctx.arc(x,y-3,14,Math.PI,0);ctx.lineTo(x+14,y+14);ctx.lineTo(x+7,y+10);ctx.lineTo(x,y+15);ctx.lineTo(x-7,y+10);ctx.closePath();ctx.fill();
+ ctx.shadowBlur=0;circle(x-5,y-3,2.5,'#57275b');circle(x+5,y-3,2.5,'#57275b');circle(x-5.5,y-4,0.8,'white');circle(x+4.5,y-4,0.8,'white');ctx.restore();
+}
+function draw(){
+ ctx.clearRect(0,0,W,H);ctx.fillStyle='#286a32';ctx.fillRect(0,0,W,H);
+ for(let i=0;i<75;i++){let x=(i*67+9)%W,y=(i*97+13)%H;ctx.strokeStyle='rgba(16,75,30,.3)';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x-3,y+7);ctx.stroke();}
+ for(let i=0;i<16;i++)circle((i*71+30)%W,(i*89+22)%H,13,'rgba(17,77,34,.12)');
+ function drawRock(x,y){
+  ctx.save();
+  // Ordinary earthy stone: no glow, sparkle, or special marker.
+  ctx.fillStyle='#686b66';ctx.beginPath();
+  ctx.moveTo(x-15,y+7);ctx.lineTo(x-12,y-5);ctx.lineTo(x-4,y-13);
+  ctx.lineTo(x+7,y-11);ctx.lineTo(x+15,y-1);ctx.lineTo(x+12,y+9);
+  ctx.lineTo(x+2,y+13);ctx.lineTo(x-10,y+11);ctx.closePath();ctx.fill();
+  ctx.strokeStyle='#484c49';ctx.lineWidth=1.5;ctx.stroke();
+  ctx.fillStyle='#858982';ctx.beginPath();ctx.moveTo(x-9,y-4);ctx.lineTo(x-3,y-10);ctx.lineTo(x+4,y-8);ctx.lineTo(x-1,y-2);ctx.closePath();ctx.fill();
+  ctx.strokeStyle='rgba(35,40,36,.55)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x+4,y+1);ctx.lineTo(x+1,y+6);ctx.lineTo(x+7,y+7);ctx.stroke();
+  ctx.restore();
+ }
+ decoyRocks.forEach(r=>drawRock(r.x,r.y));
+ drawRock(rock.x,rock.y);
+ trees.forEach(t=>drawTree(t[0],t[1]));drawGirl(player.x,player.y);drawGhost(ghost.x,ghost.y);
+ if(ended){
+  ctx.fillStyle='rgba(10,35,20,.78)';ctx.fillRect(15,210,330,105);ctx.textAlign='center';ctx.fillStyle='#fff5df';ctx.font='bold 23px system-ui';ctx.fillText(won?'YOU ESCAPED! 🎉':'CAUGHT! 👻',180,253);ctx.font='14px system-ui';ctx.fillText(won?'You found the real escape rock!':'The pink ghost caught you!',180,280);ctx.textAlign='left';
+ } else if(!playing){
+  ctx.fillStyle='rgba(10,35,20,.35)';ctx.fillRect(15,230,330,75);ctx.textAlign='center';ctx.fillStyle='white';ctx.font='bold 21px system-ui';ctx.fillText('THE HIDDEN FOREST',180,260);ctx.font='13px system-ui';ctx.fillText('Find the glowing rock. Escape the ghost!',180,283);ctx.textAlign='left';
+ }
+}
+function loop(now){
+ raf=0;if(!playing||ended)return;
+ const dt=last?Math.min((now-last)/16.67,2):1;last=now;elapsed+=Math.min(dt*16.67,50)/1000;
+ $('time').textContent=Math.floor(elapsed);
+ let dx=(held.right?1:0)-(held.left?1:0),dy=(held.down?1:0)-(held.up?1:0);
+ if(dx&&dy){dx*=.707;dy*=.707;}
+ const nx=Math.max(13,Math.min(W-13,player.x+dx*2.8*dt)),ny=Math.max(18,Math.min(H-13,player.y+dy*2.8*dt));
+ // Trees block the girl's movement.
+ const blocked=trees.some(t=>Math.hypot(nx-t[0],ny-(t[1]+9))<27);
+ if(!blocked){player.x=nx;player.y=ny;}
+ const d=Math.hypot(player.x-ghost.x,player.y-ghost.y);
+ // The ghost gets faster every 2 seconds the player survives, up to a fair cap.
+ const ghostSpeed=.64*(1+Math.floor(elapsed/2)*.16)*Math.pow(1.03,level-1);
+ if(d>0.1){ghost.x+=(player.x-ghost.x)/d*ghostSpeed*dt;ghost.y+=(player.y-ghost.y)/d*ghostSpeed*dt;}
+ if(Math.hypot(player.x-rock.x,player.y-rock.y)<22){
+  ended=true;playing=false;won=true;$('score').textContent='1';
+  $('message').textContent=level<5?('Level '+level+' complete! Tap Next Level! 🎉'):'You beat all 5 levels! You escaped! 🏆🎉';
+  $('start').textContent=level<5?'▶ Next Level':'▶ Play Again';draw();return;
+ }
+ if(Math.hypot(player.x-ghost.x,player.y-ghost.y)<21){
+  ended=true;playing=false;
+  // Flash the game pink when the ghost catches the player.
+  canvas.classList.remove('caught-flash');
+  void canvas.offsetWidth;
+  canvas.classList.add('caught-flash');
+  $('message').textContent='The pink ghost caught you! Try again. 👻';
+  $('start').textContent='▶ Try Again';draw();return;
+ }
+ draw();raf=requestAnimationFrame(loop);
+}
+function setDir(dir,on){held[dir]=on;}
+// Thumb joystick: drag in any direction to move, and release to stop.
+const thumbStick=$('thumbStick'),thumbKnob=$('thumbKnob');
+let thumbPointer=null;
+function updateThumb(e){
+ const rect=thumbStick.getBoundingClientRect();
+ const cx=rect.left+rect.width/2,cy=rect.top+rect.height/2;
+ const max=rect.width*0.29;
+ let dx=e.clientX-cx,dy=e.clientY-cy;
+ const length=Math.hypot(dx,dy);
+ if(length>max){dx=dx/length*max;dy=dy/length*max;}
+ thumbKnob.style.transform=`translate(${dx}px,${dy}px)`;
+ const dead=8;
+ held.up=dy < -dead;held.down=dy > dead;
+ held.left=dx < -dead;held.right=dx > dead;
+}
+function releaseThumb(){
+ thumbPointer=null;
+ thumbKnob.style.transform='translate(0px,0px)';
+ held.up=held.down=held.left=held.right=false;
+}
+thumbStick.addEventListener('pointerdown',e=>{
+ if(!playing||ended)return;
+ e.preventDefault();thumbPointer=e.pointerId;thumbStick.setPointerCapture(e.pointerId);updateThumb(e);
+});
+thumbStick.addEventListener('pointermove',e=>{
+ if(thumbPointer===e.pointerId){e.preventDefault();updateThumb(e);}
+});
+thumbStick.addEventListener('pointerup',e=>{if(thumbPointer===e.pointerId)releaseThumb();});
+thumbStick.addEventListener('pointercancel',releaseThumb);
+document.querySelectorAll('[data-dir]').forEach(btn=>{
+ const dir=btn.dataset.dir;
+ btn.addEventListener('pointerdown',e=>{e.preventDefault();if(playing&&!ended)setDir(dir,true);});
+ const release=e=>{e.preventDefault();setDir(dir,false);};
+ btn.addEventListener('pointerup',release);btn.addEventListener('pointercancel',release);btn.addEventListener('lostpointercapture',()=>setDir(dir,false));
+ btn.addEventListener('contextmenu',e=>e.preventDefault());
+});
+function keyboard(e,on){
+ const map={ArrowUp:'up',w:'up',W:'up',ArrowDown:'down',s:'down',S:'down',ArrowLeft:'left',a:'left',A:'left',ArrowRight:'right',d:'right',D:'right'};
+ const dir=map[e.key];if(dir){e.preventDefault();setDir(dir,on);}
+}
+window.addEventListener('keydown',e=>keyboard(e,true));window.addEventListener('keyup',e=>keyboard(e,false));
+$('start').addEventListener('click',()=>{
+ if(playing){playing=false;held={};$('start').textContent='▶ Resume';$('message').textContent='Paused. Tap Resume when ready.';draw();return;}
+ if(ended){
+  if(won&&level<5){
+   level++;reset(true,false);
+   $('message').textContent='Level '+level+'! Two more fake rocks and a 3% faster ghost! 👻';
+   $('start').textContent='Ⅱ Pause';
+   if(!raf)raf=requestAnimationFrame(loop);
+   return;
+  }
+  reset(true,true);if(!raf)raf=requestAnimationFrame(loop);return;
+ }
+ playing=true;last=0;$('start').textContent='Ⅱ Pause';$('message').textContent='Find the real escape rock! 🪨';if(!raf)raf=requestAnimationFrame(loop);
+});
+$('restart').addEventListener('click',()=>{if(raf)cancelAnimationFrame(raf);raf=0;reset(true,true);raf=requestAnimationFrame(loop);});
+reset(false);
+})();
+</script>
+</body>
+</html>
